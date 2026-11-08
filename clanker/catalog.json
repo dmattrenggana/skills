@@ -7,11 +7,11 @@
   "demo": {
     "title": "clanker-deploy.ts",
     "language": "typescript",
-    "code": "import { Clanker } from 'clanker-sdk';\nimport { createPublicClient, createWalletClient, http } from 'viem';\nimport { privateKeyToAccount } from 'viem/accounts';\nimport { base } from 'viem/chains';\n\nconst account = privateKeyToAccount(process.env.PRIVATE_KEY as `0x${string}`);\nconst publicClient = createPublicClient({ chain: base, transport: http() });\nconst wallet = createWalletClient({ account, chain: base, transport: http() });\n\nconst clanker = new Clanker({ wallet, publicClient });\nconst { txHash, waitForTransaction, error } = await clanker.deploy({\n  name: 'My Token',\n  symbol: 'TKN',\n  image: 'ipfs://...',\n  tokenAdmin: account.address,\n  metadata: { description: 'My awesome token' },\n  vanity: true,\n});\n\nif (error) throw error;\nconst { address } = await waitForTransaction();\nconsole.log(txHash, address);"
+    "code": "import { Clanker } from 'clanker-sdk/v5';\nimport { createPublicClient, createWalletClient, http, isHex } from 'viem';\nimport { privateKeyToAccount } from 'viem/accounts';\nimport { base } from 'viem/chains';\n\nconst key = process.env.PRIVATE_KEY;\nif (!key || !isHex(key)) throw new Error('PRIVATE_KEY is required.');\nconst account = privateKeyToAccount(key);\nconst publicClient = createPublicClient({ chain: base, transport: http() });\nconst wallet = createWalletClient({ account, chain: base, transport: http() });\n\nconst clanker = new Clanker({ wallet, publicClient });\nconst { txHash, waitForTransaction, error } = await clanker.deploy({\n  name: 'My Token',\n  symbol: 'TKN',\n  image: 'ipfs://...',\n  tokenAdmin: account.address,\n  metadata: { description: 'My awesome token' },\n});\n\nif (error) throw error;\nconst result = await waitForTransaction();\nif (result.error) throw result.error;\nconsole.log(txHash, result.address, result.poolId);"
   },
   "setup": [
     "Install: `install the clanker skill from https://github.com/BankrBot/skills/tree/main/clanker`",
-    "Install SDK dependencies: `npm install clanker-sdk viem`",
+    "Install SDK dependencies: `npm install clanker-sdk viem` (viem 2.49.3 or newer)",
     "Configure a signer for the target chain and test launches on a testnet before mainnet",
     "Source: https://github.com/BankrBot/skills/tree/main/clanker"
   ],

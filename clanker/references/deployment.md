@@ -1,18 +1,18 @@
-# Token Deployment
+# Token Deployment (V5)
 
-Complete guide to deploying tokens with the Clanker SDK.
+Complete guide to launching a token with the Clanker SDK v5 client.
 
 ## Simple Deployment
 
-The minimal configuration for deploying a token:
-
 ```typescript
-import { Clanker } from 'clanker-sdk';
-import { createPublicClient, createWalletClient, http, type PublicClient } from 'viem';
+import { Clanker } from 'clanker-sdk/v5';
+import { createPublicClient, createWalletClient, http, isHex, type PublicClient } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { base } from 'viem/chains';
 
-const PRIVATE_KEY = process.env.PRIVATE_KEY as `0x${string}`;
+const PRIVATE_KEY = process.env.PRIVATE_KEY;
+if (!PRIVATE_KEY || !isHex(PRIVATE_KEY)) throw new Error('PRIVATE_KEY is required.');
+
 const account = privateKeyToAccount(PRIVATE_KEY);
 
 const publicClient = createPublicClient({
@@ -40,63 +40,63 @@ const { txHash, waitForTransaction, error } = await clanker.deploy({
   context: {
     interface: 'Clanker SDK',
   },
-  vanity: true,
 });
 
 if (error) throw error;
 
 console.log(`Deploying... ${base.blockExplorers.default.url}/tx/${txHash}`);
-const { address: tokenAddress } = await waitForTransaction();
-console.log(`Done! ${base.blockExplorers.default.url}/address/${tokenAddress}`);
+const result = await waitForTransaction();
+if (result.error) throw result.error;
+console.log(`Done! ${base.blockExplorers.default.url}/address/${result.address}`);
 ```
+
+`wallet` and `publicClient` must use the same chain.
 
 ## Multi-Chain Deployment
 
-Deploy to different chains by changing the chain configuration:
-
 ```typescript
-import { base, mainnet, arbitrum, unichain } from 'viem/chains';
+import { bsc, base, monad, robinhood } from 'viem/chains';
 
-// Chain-specific RPC URLs (optional, for better rate limits)
-const RPC_URLS: Record<number, string | undefined> = {
-  [mainnet.id]: process.env.RPC_URL_MAINNET,
-  [base.id]: process.env.RPC_URL_BASE,
-  [arbitrum.id]: process.env.RPC_URL_ARBITRUM,
-  [unichain.id]: process.env.RPC_URL_UNICHAIN,
-};
-
-// Select chain
-const CHAIN = base; // or mainnet, arbitrum, unichain
+const CHAIN = robinhood; // base | bsc | monad | robinhood | xlayer | arc | elysium
 
 const publicClient = createPublicClient({
   chain: CHAIN,
-  transport: http(RPC_URLS[CHAIN.id]),
+  transport: http(process.env.RPC_URL),
 }) as PublicClient;
 
 const wallet = createWalletClient({
   account,
   chain: CHAIN,
-  transport: http(RPC_URLS[CHAIN.id]),
+  transport: http(process.env.RPC_URL),
 });
 
 const clanker = new Clanker({ wallet, publicClient });
 
-// Deploy with chainId
 const { txHash, waitForTransaction, error } = await clanker.deploy({
   chainId: CHAIN.id,
   name: 'My Token',
   symbol: 'TKN',
-  // ... rest of config
 });
+```
+
+`chainId` is optional. Omit it to follow the client chain.
+
+Elysium is not in viem, so the SDK exports the `elysium` chain and it has no default RPC:
+
+```typescript
+import { elysium } from 'clanker-sdk';
+
+const publicClient = createPublicClient({
+  chain: elysium,
+  transport: http(process.env.ELYSIUM_RPC_URL), // required
+}) as PublicClient;
 ```
 
 ## Token Metadata
 
-Configure rich metadata for your token:
-
 ```typescript
 metadata: {
-  description: 'Token with custom configuration including vesting and rewards',
+  description: 'Token with custom configuration including taxes and rewards',
   socialMediaUrls: [
     { platform: 'twitter', url: 'https://twitter.com/mytoken' },
     { platform: 'telegram', url: 'https://t.me/mytoken' },
@@ -108,190 +108,171 @@ metadata: {
 
 ## Context Configuration
 
-Track deployment source and social platform info:
+Track the deployment source:
 
 ```typescript
 context: {
-  interface: 'Clanker SDK',     // Your app/interface name
-  platform: 'farcaster',        // Social platform (farcaster, X, etc.)
-  messageId: '',                // Cast hash, tweet URL, etc.
-  id: '',                       // FID, X handle, etc.
+  interface: 'Bankr',        // your app or interface name
+  platform: 'farcaster',     // social platform
+  messageId: '',             // cast hash, tweet URL, and so on
+  id: '',                    // FID, X handle, and so on
 }
 ```
 
-## Vanity Addresses
+`context` defaults to `{ interface: 'SDK' }`.
 
-Enable vanity address generation for memorable contract addresses:
+## Fees
 
 ```typescript
-const { txHash, waitForTransaction, error } = await clanker.deploy({
-  // ... other config
-  vanity: true,  // SDK will mine for distinctive address
-});
+buyFee: 2,    // percent of the trade, 1 to 10
+sellFee: 2,   // percent of the trade, 1 to 10
 ```
 
-## Full Configuration Example
+Each fee defaults to 1% and includes the protocol share. The V4 `fee` and `fees` fields are rejected.
+
+## Quotes
 
 ```typescript
-// Bankr interface fee recipient (20%)
-const BANKR_INTERFACE_ADDRESS = '0xF60633D02690e2A15A54AB919925F3d038Df163e';
+pool: {
+  pairedToken: 'WETH',  // or a native currency address; 'WETH' means native currency
+}
+```
 
+- The default quote is the native currency of the chain.
+- On Arc, the native coin is USDC, so both the default and `WETH` mean USDC.
+- Any other quote address requires factory approval.
+
+## Rewards
+
+```typescript
+rewards: {
+  recipients: [
+    { recipient: account.address, admin: account.address, bps: 8000, token: 'Paired' },
+    { recipient: INTEGRATOR, admin: INTEGRATOR, bps: 2000, token: 'Paired' },
+  ],
+}
+```
+
+- 1 to 7 slots, each with a positive `bps`, totalling exactly 10,000.
+- `token: 'Paired'` or omit `token`. `Both` and `Clanker` are rejected in V5.
+- The first slot whose admin is the creator becomes the creator slot.
+
+## Tax Allocation
+
+```typescript
+burn: 10,                       // percent of the tax burned
+dividends: {
+  share: 20,                    // percent of the tax paid as holder dividends
+  minimumHolding: 10_000n * 10n ** 18n,  // token base units
+},
+integrator: {
+  address: '0x4444444444444444444444444444444444444444',
+  share: 5,                     // percent of the tax paid to the integrator
+},
+```
+
+`burn`, `dividends.share`, and `integrator.share` must total at most 100%. The creator receives the remainder.
+
+## Dev Buy
+
+```typescript
 const { txHash, waitForTransaction, error } = await clanker.deploy({
-  chainId: base.id,
   name: 'My Token',
   symbol: 'TKN',
-  image: 'ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi',
-  tokenAdmin: account.address,
-  
-  metadata: {
-    description: 'Token with custom configuration including vesting and rewards',
-    socialMediaUrls: [
-      { platform: 'twitter', url: 'https://twitter.com/mytoken' },
-      { platform: 'telegram', url: 'https://t.me/mytoken' },
-    ],
-  },
-  
-  context: {
-    interface: 'Bankr',
-    platform: 'farcaster',
-    messageId: '',
-    id: '',
-  },
-  
-  vault: {
-    percentage: 10,
-    lockupDuration: 2592000,
-    vestingDuration: 2592000,
-    recipient: account.address,
-  },
-  
   devBuy: {
-    ethAmount: 0,
-    recipient: account.address,
-  },
-  
-  // Default: 80% creator, 20% Bankr interface (all in paired token)
-  // Token options: 'Clanker' | 'Paired' | 'Both'
-  rewards: {
-    recipients: [
-      {
-        recipient: account.address,
-        admin: account.address,
-        bps: 8000,  // 80% to creator
-        token: 'Paired',  // Receive paired token (WETH)
-      },
-      {
-        recipient: BANKR_INTERFACE_ADDRESS,
-        admin: BANKR_INTERFACE_ADDRESS,
-        bps: 2000,  // 20% to Bankr
-        token: 'Paired',  // Receive paired token (WETH)
-      },
-    ],
-  },
-  
-  pool: {
-    pairedToken: '0x4200000000000000000000000000000000000006', // WETH on Base
-    positions: 'Standard',
-  },
-  
-  fees: 'StaticBasic',
-  vanity: true,
-  
-  sniperFees: {
-    startingFee: 666_777,
-    endingFee: 41_673,
-    secondsToDecay: 15,
+    ethAmount: 0.01,            // native currency units
+    recipient: account.address, // defaults to tokenAdmin, then the caller
   },
 });
 ```
 
-## Deploy with Custom Salt
-
-Use a specific salt for deterministic address generation:
+Set the minimum explicitly when you want price protection:
 
 ```typescript
-import { zeroHash } from 'viem';
-
-const { txHash, waitForTransaction, error } = await clanker.deploy({
-  // ... config
-  salt: zeroHash, // or custom bytes32 value
-});
-```
-
-## Deploy with USDC Pair
-
-Create a token paired with USDC instead of WETH:
-
-```typescript
-const USDC_BASE = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
-
-const { txHash, waitForTransaction, error } = await clanker.deploy({
-  // ... config
-  pool: {
-    pairedToken: USDC_BASE,
-    positions: 'Standard',
-  },
-});
-```
-
-## Deploy with 20 ETH Initial Liquidity
-
-Configure larger initial market cap:
-
-```typescript
-import { getTickFromMarketCap } from 'clanker-sdk';
-
-const customPool = getTickFromMarketCap(20); // 20 ETH
-
-const { txHash, waitForTransaction, error } = await clanker.deploy({
-  // ... config
-  pool: {
-    ...customPool,
-    positions: [
-      {
-        tickLower: customPool.tickIfToken0IsClanker,
-        tickUpper: -120000,
-        positionBps: 10_000,
-      },
-    ],
-  },
-});
-```
-
-## Error Handling
-
-Always handle deployment errors:
-
-```typescript
-const { txHash, waitForTransaction, error } = await clanker.deploy(config);
-
-if (error) {
-  console.error('Deployment failed:', error.message);
-  process.exit(1);
+devBuy: {
+  ethAmount: '0.05',
+  minAmountOut: 123456789012345n,  // final token base units, 18 decimals
 }
-
-console.log(`Transaction: ${txHash}`);
-
-const { address, error: txError } = await waitForTransaction();
-
-if (txError) {
-  console.error('Transaction failed:', txError.message);
-  process.exit(1);
-}
-
-console.log('Token deployed at:', address);
 ```
+
+Adjust the default slippage with the `devBuySlippagePercent` deploy option (default 5, must be above 0 and below 50):
+
+```typescript
+const { txHash, waitForTransaction, error } = await clanker.deploy(config, {
+  devBuySlippagePercent: 2,
+});
+```
+
+Custom quotes need a route. The builder returns the router calldata as a hex string:
+
+```typescript
+import { Clanker, type TaxBuyRouteBuilder } from 'clanker-sdk/v5';
+
+const buildBuyRoute: TaxBuyRouteBuilder = async (context) => {
+  // context: chainId, caller, token, hook, adapter, tickSpacing,
+  //          launchParams, amountIn, minAmountOut, poolKey
+  return '0x...';
+};
+
+const { txHash, waitForTransaction, error } = await clanker.deploy(config, { buildBuyRoute });
+```
+
+## Deploy Options
+
+```typescript
+const { txHash, waitForTransaction, error } = await clanker.deploy(config, {
+  deadlineSeconds: 1800,        // default 1200, or 300 with a dev buy
+  devBuySlippagePercent: 5,     // default 5
+  maxTries: 100_000,            // salt search attempts, default limit 1,000,000
+  signal: controller.signal,    // cancel the salt search
+});
+```
+
+- `deadlineSeconds` starts when the SDK reads the block, before the wallet signs. A launch signed after the deadline reverts with `LaunchExpired` and costs gas. Raise it for slow signers such as multisigs.
+- The SDK mines a fresh salt for every preparation, so each attempt can produce a different token address.
 
 ## Simulation Before Deployment
 
-Test deployment without executing:
+```typescript
+const result = await clanker.deploySimulate(config);
+```
+
+`deploySimulate(token, accountOrOptions?)` accepts a V4 `Account` or V5 options and returns the viem simulation result, or `{ error }`.
+
+## Unsigned Deployment
 
 ```typescript
-// Note: Check SDK docs for simulate method availability
-try {
-  await clanker.deploySimulate(config);
-  console.log('Simulation successful');
-} catch (error) {
-  console.error('Simulation failed:', error);
+const tx = await clanker.getDeployTransaction(config, { account: callerAddress });
+```
+
+Submit `tx.address`, `tx.abi`, `tx.functionName`, `tx.args`, and `tx.value` yourself with that caller. This method sends nothing. The caller must send any recipient transfer themselves, with `transferLaunchBuy` or an ERC-20 transfer.
+
+## Error Handling
+
+```typescript
+import { Clanker, SEND_UNCERTAIN } from 'clanker-sdk/v5';
+
+const { txHash, waitForTransaction, error, transferError, failedStep } = await clanker.deploy(config);
+
+if (error) {
+  // A top-level error means nothing was sent, so a retry is safe.
+  if ((error as any).data?.rawName === SEND_UNCERTAIN) {
+    // The send itself failed and the launch can exist. Check the wallet's transactions.
+  }
+  throw error;
 }
+
+if (transferError) {
+  // The launch succeeded but the recipient transfer failed.
+  // failedStep is 'transfer'; retry with transferLaunchBuy({ txHash, token, recipient }).
+  console.error('Transfer failed:', transferError.message);
+}
+
+const result = await waitForTransaction();
+if (result.error) {
+  // result.error.data.type is 'state' (failed on chain) or 'unknown' (not confirmed).
+  throw result.error;
+}
+
+console.log('Token deployed at:', result.address);
 ```

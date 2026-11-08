@@ -1,6 +1,8 @@
-# Airdrops
+# Airdrops (V4 only)
 
 Distribute tokens to multiple addresses using Merkle tree proofs with the Clanker airdrop extension.
+
+> **V4 only.** V5 rejects airdrops at launch. This reference covers existing V4 tokens: claims, proofs, and registration still work through `clanker-sdk/v4/extensions`. New launches use `clanker-sdk/v5`.
 
 ## Overview
 
@@ -36,7 +38,7 @@ const { tree, airdrop } = createAirdrop([
 Include the airdrop in your token deployment:
 
 ```typescript
-import { Clanker } from 'clanker-sdk';
+import { Clanker } from 'clanker-sdk/v4';
 import { createAirdrop } from 'clanker-sdk/v4/extensions';
 
 const { tree, airdrop } = createAirdrop([

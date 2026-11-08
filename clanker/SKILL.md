@@ -1,19 +1,19 @@
 ---
 name: clanker
-description: Deploy ERC20 tokens on Base, Ethereum, Arbitrum, and other EVM chains using the Clanker SDK. Use when the user wants to deploy a new token, create a memecoin, set up token vesting, configure airdrops, manage token rewards, claim LP fees, or update token metadata. Supports V4 deployment with vaults, airdrops, dev buys, custom market caps, vanity addresses, and multi-chain deployment.
+description: Deploy ERC20 tax tokens with the Clanker SDK (v5) on Base, BNB Chain, Monad, X Layer, Robinhood Chain, Arc, and Elysium. Use when the user wants to launch a token, set buy/sell taxes, split taxes between burn, dividends and an integrator, configure a dev buy, distribute trading fees to reward recipients, pay holder dividends, transfer creator rights, or update token metadata. Also covers managing existing V3/V4 tokens (vault claims, airdrops, presales, LP fee claims).
 ---
 
 # Clanker SDK
 
-Deploy production-ready ERC20 tokens with built-in liquidity pools using the official Clanker TypeScript SDK.
+Launch ERC20 tokens with Uniswap V4 liquidity pools, built-in taxes, and fee distribution through the official Clanker TypeScript SDK.
 
 ## Overview
 
-Clanker is a token deployment protocol that creates ERC20 tokens with Uniswap V4 liquidity pools in a single transaction. The SDK provides a TypeScript interface for deploying tokens with advanced features like vesting, airdrops, and customizable reward distribution.
+- **V5 (current):** Tax-token launches on Base, BNB Chain, Monad, X Layer, Robinhood Chain, Arc, and Elysium. Taxes are set at launch and split between the protocol, burn, dividends, an integrator, and the creator.
+- **V3/V4 (legacy):** Existing tokens stay manageable. Claims, reward updates, metadata updates, vault claims, airdrops, and running presales still work.
+- From SDK v5, V3/V4 `deploy`, `deploySimulate`, `getDeployTransaction`, and `startPresale` **throw**. New launches go through `clanker-sdk/v5` only.
 
-## Quick Start
-
-### Installation
+## Installation
 
 ```bash
 npm install clanker-sdk viem
@@ -23,25 +23,26 @@ yarn add clanker-sdk viem
 pnpm add clanker-sdk viem
 ```
 
-### Environment Setup
-
-Create a `.env` file with your private key:
+- SDK v5 requires **viem 2.49.3 or newer**. viem is a peer dependency, so the project always uses its own viem copy. A pinned older viem fails to install.
+- Types were checked against TypeScript 5.9 and 6.0.
 
 ```bash
-PRIVATE_KEY=0x...your_private_key_here
+# Check the installed version
+npm view clanker-sdk version
 ```
 
-### Basic Token Deployment
+## Quick Start (V5)
 
 ```typescript
-import { Clanker } from 'clanker-sdk';
-import { createPublicClient, createWalletClient, http, type PublicClient } from 'viem';
+import { Clanker } from 'clanker-sdk/v5';
+import { createPublicClient, createWalletClient, http, isHex, type PublicClient } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { base } from 'viem/chains';
 
-const PRIVATE_KEY = process.env.PRIVATE_KEY as `0x${string}`;
-const account = privateKeyToAccount(PRIVATE_KEY);
+const PRIVATE_KEY = process.env.PRIVATE_KEY;
+if (!PRIVATE_KEY || !isHex(PRIVATE_KEY)) throw new Error('PRIVATE_KEY is required.');
 
+const account = privateKeyToAccount(PRIVATE_KEY);
 const publicClient = createPublicClient({
   chain: base,
   transport: http(),
@@ -60,404 +61,390 @@ const { txHash, waitForTransaction, error } = await clanker.deploy({
   symbol: 'TKN',
   image: 'ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi',
   tokenAdmin: account.address,
-  metadata: {
-    description: 'My awesome token',
-  },
-  context: {
-    interface: 'Clanker SDK',
-  },
-  vanity: true,
+  metadata: { description: 'My awesome token' },
+  context: { interface: 'Clanker SDK' },
 });
 
 if (error) throw error;
 
-const { address: tokenAddress } = await waitForTransaction();
-console.log('Token deployed at:', tokenAddress);
+const result = await waitForTransaction();
+if (result.error) throw result.error;
+
+console.log('Token deployed at:', result.address);
+console.log('Pool id:', result.poolId);
 ```
 
-## Core Capabilities
+`wallet` and `publicClient` must use the same chain.
 
-### 1. Token Deployment
+## V5 vs V4 (read before writing code)
 
-Deploy tokens with full customization including metadata, social links, and pool configuration.
+| Topic | V5 behavior |
+|-------|-------------|
+| Import | `import { Clanker } from 'clanker-sdk/v5'` |
+| Fees | `buyFee` and `sellFee`, each 1% by default, protocol share included. `fee` and `fees` are rejected. |
+| Vanity | `vanity: true` is accepted with no effect. V5 always mines the `cccc` suffix. |
+| Salt | `salt` is rejected. Each preparation uses a fresh salt. |
+| Rewards | 1 to 7 slots, positive `bps` totalling 10,000. Use `Paired` or omit `token`. |
+| Market cap | No per-launch start price or market cap input. The factory sets the start price per quote. |
+| Rejected inputs | Vaults, airdrops, presales, pool positions, presets, custom ticks, sniper fees, lockers, pool extensions, and `Both` or `Clanker` fee preferences. |
+| Address book | `clankerConfigFor` and `CLANKERS` have no V5 entry. Use `TAX_ADDRESSES` from `clanker-sdk/v5`. |
+| Token type | Import `ClankerTokenV5` from `clanker-sdk/v5`, not from the package root. |
+| Dev buy | `minAmountOut` (final token base units). The V4 `amountOutMin` name is rejected except as `0`. |
 
-**Basic deployment:**
-- Token name, symbol, and image (IPFS)
-- Description and social media links
-- Vanity address generation
-- Custom pool configurations
+## Token Configuration (V5)
+
+```typescript
+{
+  chainId: 8453,                    // omit to follow the client chain
+  name: 'My Token',
+  symbol: 'TKN',
+  image: 'ipfs://...',
+  tokenAdmin: account.address,      // creator; omit or zero to use the caller
+
+  metadata: {
+    description: 'Token description',
+    socialMediaUrls: [
+      { platform: 'twitter', url: 'https://twitter.com/mytoken' },
+      { platform: 'telegram', url: 'https://t.me/mytoken' },
+    ],
+    auditUrls: ['https://example.com/audit'],
+  },
+
+  context: {
+    interface: 'Bankr',             // defaults to { interface: 'SDK' }
+    platform: 'farcaster',
+    messageId: '',
+    id: '',
+  },
+
+  buyFee: 1,                       // percent, default 1
+  sellFee: 1,                      // percent, default 1
+
+  pool: {
+    pairedToken: 'WETH',           // or the native currency; other quotes need factory approval
+  },
+
+  rewards: {
+    recipients: [
+      { recipient: account.address, admin: account.address, bps: 8000, token: 'Paired' },
+      { recipient: INTEGRATOR, admin: INTEGRATOR, bps: 2000, token: 'Paired' },
+    ],
+  },
+
+  devBuy: {
+    ethAmount: 0.01,               // native currency units; decimal strings for small amounts
+    recipient: account.address,    // defaults to tokenAdmin, then the caller
+  },
+
+  burn: 10,                        // percent of the tax sent to the burn address
+  dividends: {
+    share: 20,                     // percent of the tax paid as holder dividends
+    minimumHolding: 10_000n * 10n ** 18n,
+  },
+  integrator: {
+    address: '0x4444444444444444444444444444444444444444',
+    share: 5,                      // percent of the tax paid to the integrator
+  },
+
+  contractURI: '',                 // default empty text
+  metadataEditable: true,          // default true
+  antiSnipeEnabled: true,          // default true
+}
+```
+
+- `burn`, `dividends.share`, and `integrator.share` divide the tax after the protocol share and must total at most 100%. The creator receives the remainder.
+- The first reward slot with the creator as admin becomes the creator slot. If no slot has the creator as admin, the given slots share the whole creator remainder and the creator receives none of it.
 
 **Reference:** [references/deployment.md](references/deployment.md)
 
-### 2. Vault (Token Vesting)
+## Tax Model
 
-Lock a percentage of tokens with lockup and vesting periods:
+- Buy and sell taxes are each 1% to 10% of the trade.
+- The protocol takes 10% of the tax, but at least 0.5% and at most 1% of the trade. At the default 1% tax, the protocol takes 0.5% of the trade, which is half the tax.
+- Burn, dividend, and integrator shares divide what remains after the protocol share. The creator slots receive the rest.
+- A buy in the first 20 seconds pays an anti-snipe fee that starts at 99% and falls to the normal tax. The extra fee goes to the protocol.
+- Dividends require a holding of at least 10,000 tokens. While no holder qualifies, the dividend share goes to the protocol.
+- Read the live policy with `quoteConfig` and the factory `taxPolicy` before quoting numbers, because the factory owner can change the policy for new launches.
 
-```typescript
-vault: {
-  percentage: 10,           // 10% of token supply
-  lockupDuration: 2592000,  // 30 days cliff (in seconds)
-  vestingDuration: 2592000, // 30 days linear vesting
-  recipient: account.address,
-}
-```
+| Tax | Protocol share of the trade | Left for burn, dividends, integrator, and creator |
+|-----|----------------------------|---------------------------------------------------|
+| 1% | 0.5% | 0.5% |
+| 2% | 0.5% | 1.5% |
+| 5% | 0.5% | 4.5% |
+| 7% | 0.7% | 6.3% |
+| 10% | 1% | 9% |
 
-**Reference:** [references/vesting.md](references/vesting.md)
+**Reference:** [references/tax.md](references/tax.md)
 
-### 3. Airdrops
-
-Distribute tokens to multiple addresses using Merkle tree proofs:
-
-```typescript
-import { createAirdrop, registerAirdrop } from 'clanker-sdk/v4/extensions';
-
-const { tree, airdrop } = createAirdrop([
-  { account: '0x...', amount: 200_000_000 },
-  { account: '0x...', amount: 50_000_000 },
-]);
-
-// Include in deployment
-airdrop: {
-  ...airdrop,
-  lockupDuration: 86_400,  // 1 day
-  vestingDuration: 86_400, // 1 day
-}
-```
-
-**Reference:** [references/airdrops.md](references/airdrops.md)
-
-### 4. Rewards Configuration
-
-Configure trading fee distribution:
+## Dev Buy
 
 ```typescript
-rewards: {
-  recipients: [
-    {
-      recipient: account.address,
-      admin: account.address,
-      bps: 5000,      // 50% of fees
-      token: 'Both',  // Receive both tokens
-    },
-    {
-      recipient: '0x...',
-      admin: '0x...',
-      bps: 5000,      // 50% of fees
-      token: 'Both',
-    },
-  ],
-}
+const { txHash, waitForTransaction, error } = await clanker.deploy({
+  name: 'Example',
+  symbol: 'EX',
+  devBuy: { ethAmount: 0.01 },
+});
 ```
 
-#### Token Type Options
+- `ethAmount` uses native currency units. Use a decimal string for small amounts.
+- `minAmountOut` uses final token base units with 18 decimals.
+- By default the SDK simulates the exact launch with a minimum of `1n`, checks the token address, and reads the third result value. It subtracts `devBuySlippagePercent` (default 5%, must be above 0 and below 50) with integer math and rounds down. A zero minimum produces an error. An explicit positive `minAmountOut` skips the quote simulation.
+- With default addresses the SDK selects `directNativeSwapXRoute` for a native quote, `stableSwapXRoute(publicClient)` for a stable quote, and `directArcUsdcSwapXRoute` on Arc. Other quotes need `devBuy.routeData` or `buildBuyRoute`. A route builder returns the router calldata as a hex string.
+- The effective recipient is `devBuy.recipient`, then a nonzero `tokenAdmin`, then the caller. When it differs from the caller, `deploy` waits for the launch and transfers the exact bought amount, returning `transferTxHash`.
+- A dev buy uses an upgradeable swap router, so a low `minAmountOut` gives little price protection. A sandwich trade can lose more value on the native-to-stable step than the slippage percent covers.
 
-Choose which tokens each recipient receives from trading fees:
-
-| Token Type | Description |
-|------------|-------------|
-| `'Clanker'` | Receive only the deployed token |
-| `'Paired'` | Receive only the paired token (e.g., WETH) |
-| `'Both'` | Receive both tokens |
-
-#### Default Bankr Interface Fee
-
-When deploying via Bankr, use this default rewards configuration with 20% interface fee:
-
-```typescript
-// Bankr interface fee recipient
-const BANKR_INTERFACE_ADDRESS = '0xF60633D02690e2A15A54AB919925F3d038Df163e';
-
-rewards: {
-  recipients: [
-    {
-      recipient: account.address,           // Creator
-      admin: account.address,
-      bps: 8000,                            // 80% to creator
-      token: 'Paired',                      // Receive paired token (WETH)
-    },
-    {
-      recipient: BANKR_INTERFACE_ADDRESS,   // Bankr interface
-      admin: BANKR_INTERFACE_ADDRESS,
-      bps: 2000,                            // 20% to Bankr
-      token: 'Paired',                      // Receive paired token (WETH)
-    },
-  ],
-}
-```
-
-**Reference:** [references/rewards.md](references/rewards.md)
-
-### 5. Dev Buy
-
-Include an initial token purchase in the deployment:
-
-```typescript
-devBuy: {
-  ethAmount: 0.1,           // Buy with 0.1 ETH
-  recipient: account.address,
-}
-```
-
-### 6. Custom Market Cap
-
-Set initial token price/market cap:
-
-```typescript
-import { getTickFromMarketCap } from 'clanker-sdk';
-
-const customPool = getTickFromMarketCap(5); // 5 ETH market cap
-
-pool: {
-  ...customPool,
-  positions: [
-    {
-      tickLower: customPool.tickIfToken0IsClanker,
-      tickUpper: -120000,
-      positionBps: 10_000,
-    },
-  ],
-}
-```
-
-**Reference:** [references/pool-config.md](references/pool-config.md)
-
-### 7. Anti-Sniper Protection
-
-Configure fee decay to protect against snipers:
-
-```typescript
-sniperFees: {
-  startingFee: 666_777,    // 66.6777% starting fee
-  endingFee: 41_673,       // 4.1673% ending fee
-  secondsToDecay: 15,      // 15 seconds decay
-}
-```
-
-## Contract Limits & Constants
-
-| Parameter | Value | Notes |
-|-----------|-------|-------|
-| Token Supply | 100 billion | Fixed at 100,000,000,000 with 18 decimals |
-| Max Extension BPS | 9000 (90%) | Max tokens to extensions, min 10% to LP |
-| Max Extensions | 10 | Maximum number of extensions per deployment |
-| Vault Min Lockup | 7 days | Minimum lockup duration for vesting |
-| Airdrop Min Lockup | 1 day | Minimum lockup duration for airdrops |
-| Max LP Fee | 10% | Normal trading fee cap |
-| Max Sniper Fee | 80% | Maximum MEV/sniper protection fee |
-| Sniper Fee Decay | 2 minutes max | Maximum time for sniper fee decay |
-| Max Reward Recipients | 7 | Maximum fee distribution recipients |
-| Max LP Positions | 7 | Maximum liquidity positions |
+**Reference:** [references/chains.md](references/chains.md)
 
 ## Supported Chains
 
-| Chain | Chain ID | Native Token | Status |
-|-------|----------|--------------|--------|
-| Base | 8453 | ETH | ✅ Full support |
-| Ethereum | 1 | ETH | ✅ Full support |
-| Arbitrum | 42161 | ETH | ✅ Full support |
-| Unichain | - | ETH | ✅ Full support |
-| Monad | - | MON | ✅ Static fees only |
+| Chain | Chain ID | Native quote | Stable quote | V3 pool fee for a stable dev buy |
+|-------|----------|--------------|--------------|----------------------------------|
+| Base | 8453 | ETH | USDC (6 decimals) | 0.05% |
+| BNB Chain | 56 | BNB | USDC (18 decimals) | 0.01% |
+| Monad | 143 | MON | USDC (6 decimals) | 0.3% |
+| X Layer | 196 | OKB | USDC (6 decimals) | 0.05% |
+| Robinhood Chain | 4663 | ETH | USDG (6 decimals) | 0.01% |
+| Arc | 5042 | none, the native coin is USDC | USDC (6 decimals), the default | none, no V3 step |
+| Elysium | 99901 | HYPE | USDC (6 decimals) | none, no HYPE/USDC pool |
 
-## Post-Deployment Operations
+- Launches were open on all seven chains as of 6 November 2026.
+- Clanker **no longer supports new launches** on Ethereum, Arbitrum, and Unichain. Their factories have launches turned off, so a launch there fails with `Launches are not open on chain N` before any send.
+- Elysium (chain id 99901) is not in viem, so the SDK exports the `elysium` chain. It has no public RPC, so pass your own (`http('<your Elysium RPC URL>')`).
+- `pool.pairedToken` defaults to native currency. The `WETH` string also means native currency. On Arc, both mean USDC. Other quote addresses require factory approval.
 
-### Claim Vaulted Tokens
+**Reference:** [references/chains.md](references/chains.md)
+
+## Post-Deployment Operations (V5)
+
+### Rewards
 
 ```typescript
-const claimable = await clanker.getVaultClaimableAmount({ token: TOKEN_ADDRESS });
+// Read the reward slots
+const rewards = await clanker.getTokenRewards({ token: TOKEN_ADDRESS });
+// { token, poolId, rewardBps, rewardAdmins, rewardRecipients, rewardIsCreator }
 
-if (claimable > 0n) {
-  const { txHash } = await clanker.claimVaultedTokens({ token: TOKEN_ADDRESS });
+// Check and claim
+const available = await clanker.availableRewards({
+  token: TOKEN_ADDRESS,
+  rewardRecipient: FEE_OWNER_ADDRESS,
+});
+
+if (available > 0n) {
+  const { txHash, error } = await clanker.claimRewards({
+    token: TOKEN_ADDRESS,
+    rewardRecipient: FEE_OWNER_ADDRESS,
+  });
+  if (error) throw error;
 }
 ```
 
-### Collect Trading Rewards
+Anyone can send a claim; the escrow always pays the recipient. Burn credits reach the burn address when anyone calls `claimRewards` with `rewardRecipient: '0x000000000000000000000000000000000000dEaD'`.
+
+### Dividends
 
 ```typescript
-// Check available rewards
-const availableFees = await clanker.availableRewards({
+// What a holder can withdraw
+const claimable = await clanker.withdrawableDividends({
   token: TOKEN_ADDRESS,
-  rewardRecipient: FEE_OWNER_ADDRESS,
+  holder: HOLDER_ADDRESS,
 });
 
-// Claim rewards
-const { txHash } = await clanker.claimRewards({
-  token: TOKEN_ADDRESS,
-  rewardRecipient: FEE_OWNER_ADDRESS,
+// Claim for up to 64 tokens in one transaction
+const { txHash, error } = await clanker.claimDividends({
+  tokens: [TOKEN_A, TOKEN_B],
+  unwrapWrappedNative: true,   // false to receive the wrapped token
 });
 ```
 
-### Update Token Metadata
+### Creator Rights
 
 ```typescript
-const metadata = JSON.stringify({
-  description: 'Updated description',
-  socialMediaUrls: [
-    { platform: 'twitter', url: 'https://twitter.com/mytoken' },
-    { platform: 'telegram', url: 'https://t.me/mytoken' },
-  ],
-});
-
-const { txHash } = await clanker.updateMetadata({
-  token: TOKEN_ADDRESS,
-  metadata,
-});
+await clanker.setCreatorFeeRecipient({ token, newCreatorFeeRecipient });
+await clanker.proposeCreatorRightsTransfer({ token, newCreator });
+await clanker.acceptCreatorRightsTransfer({ token });
+await clanker.cancelCreatorRightsTransfer({ token });
+await clanker.safeTransferCreatorRights({ token, receiver, callbackData, value });
 ```
 
-### Update Token Image
+`safeTransferCreatorRights` moves rights to a contract in one step; the contract must implement the creator-rights receiver callback.
+
+### Metadata
 
 ```typescript
-const { txHash } = await clanker.updateImage({
-  token: TOKEN_ADDRESS,
-  image: 'ipfs://new_image_hash',
-});
+await clanker.updateImage({ token, newImage: 'ipfs://...' });
+await clanker.updateMetadata({ token, metadata: JSON.stringify({...}) });
+await clanker.updateTokenName({ token, newName: '...' });
+await clanker.updateTokenSymbol({ token, newSymbol: '...' });
+await clanker.updateTokenContractURI({ token, newContractURI: '...' });
+await clanker.updateTokenExtraMetadata({ token, metadataKey: '...', metadataValue: '...' });
 ```
+
+These work while `metadataEditable` is true. Every write has a matching `get…Transaction` and `…Simulate` method.
+
+### Reads
+
+```typescript
+const policy = await clanker.taxPolicy();
+const open = await clanker.launchCreationEnabled();
+const config = await clanker.getPoolConfig({ token });
+const rates = await clanker.getTaxRates({ token, isBuy: true });
+const address = await clanker.predictToken(params, account);
+const version = await clanker.configVersion();
+```
+
+`getTaxRates` returns a 1e24 scale, so 1% is `10n ** 22n`. The taxes and shares in `getPoolConfig` use the launch scale, where 1% is `1_000_000`.
+
+**Reference:** [references/rewards.md](references/rewards.md)
+
+## Result and Error Semantics
+
+`deploy` returns `{ txHash, expectedAddress, waitForTransaction, error, transferTxHash?, failedStep?, transferError? }`.
+
+- A top-level `error` means **nothing was sent**, so a retry is safe. After the launch is sent, `deploy` never returns a top-level `error`.
+- `waitForTransaction()` returns `{ address, poolId }` or `{ error }`. An `error.data.type` of `state` means the launch failed on chain. A type of `unknown` means the SDK could not confirm the launch, so the launch can exist. Do not launch again before checking the transaction.
+- `SEND_UNCERTAIN` (exported from `clanker-sdk/v5`) marks a failure during the send itself, where the wallet or RPC failed and the launch can exist. Check the wallet's transactions before a retry.
+- `failedStep` names the failed step: `launchReceipt` means the SDK could not confirm the launch; `transfer` means the launch succeeded and the transfer failed.
+- The deadline is 1,200 seconds, or 300 seconds with a dev buy. Set `deadlineSeconds` to change it. A launch signed after the deadline reverts with `LaunchExpired` and costs gas.
+- The local salt search permits 1,000,000 attempts. `maxTries` limits attempts, `signal` cancels the search. Each preparation can produce a different token address.
+
+```typescript
+import { Clanker, SEND_UNCERTAIN } from 'clanker-sdk/v5';
+
+const { txHash, waitForTransaction, error } = await clanker.deploy(config);
+
+if (error) {
+  if ((error as any).data?.rawName === SEND_UNCERTAIN) {
+    // The launch can exist. Check the wallet's transactions before retrying.
+  }
+  throw error;
+}
+
+const result = await waitForTransaction();
+if (result.error) throw result.error;
+```
+
+## Unsigned Deployment
+
+```typescript
+const tx = await clanker.getDeployTransaction(config, { account: callerAddress });
+// Submit tx.address, tx.abi, tx.functionName, tx.args, tx.value yourself.
+```
+
+`getDeployTransaction` sends nothing. The caller must send any recipient transfer themselves, with `transferLaunchBuy` or an ERC-20 transfer.
+
+## CLI
+
+```bash
+npm install -g clanker-sdk   # or: npx clanker-sdk ...
+```
+
+```sh
+clanker-sdk deploy --name "Example" --symbol "EX" --chain base
+clanker-sdk deploy --name "Example" --symbol "EX" --chain robinhood \
+  --dev-buy-eth 0.05 \
+  --burn 10 --dividend-share 20 --dividend-min-holding 10000 \
+  --integrator 0x4444444444444444444444444444444444444444 --integrator-share 5
+clanker-sdk dividends available --token <TOKEN_A>,<TOKEN_B>
+clanker-sdk dividends claim --token <TOKEN_A> --token <TOKEN_B>
+clanker-sdk rewards claim --token <V5_LAUNCH_TOKEN>
+```
+
+| Command | Description |
+|---------|-------------|
+| `setup` | Save default wallet and chain config |
+| `deploy` | Deploy a V5 token |
+| `rewards` | Claim rewards and update recipients or admins (add `--v5` for V5 currency claims) |
+| `dividends` | Check and claim holder dividends of V5 tokens |
+| `vault` | Claim vaulted V4 tokens |
+| `airdrop` | Generate Merkle trees, register and claim V4 airdrops |
+| `token` | Update the image and metadata for V4 and V5 tokens |
+
+Global options: `--chain <name>`, `--rpc <url>`, `--private-key <key>`, `--json`, `--dry-run`.
+
+Chain names: `base`, `base-sepolia`, `arbitrum`, `ethereum`, `bsc`, `unichain`, `monad`, `robinhood`, `xlayer`, `arc`, `elysium`.
+
+- Buy and sell fees default to 1%. Only name and symbol are required.
+- Exit code 1 means the launch failed or nothing was sent. Exit code 2 means the launch exists or can exist and a later step failed. Do not re-run after exit code 2, because that can launch a second token.
+- `vault` and `airdrop` are for V4 tokens only.
+
+## Legacy V3/V4 Tokens
+
+Management of existing tokens is unchanged, but the client comes from the versioned entry point:
+
+```typescript
+import { Clanker } from 'clanker-sdk/v4';           // V4 tokens
+import { Clanker } from 'clanker-sdk/v3';           // V3 tokens
+import { createAirdrop, registerAirdrop } from 'clanker-sdk/v4/extensions';
+```
+
+| Task | Entry point |
+|------|-------------|
+| Claim vaulted tokens | `clanker-sdk/v4` — `getVaultClaimableAmount`, `claimVaultedTokens` |
+| Airdrops and presales | `clanker-sdk/v4/extensions` |
+| LP fee claims, reward updates | `clanker-sdk/v4` or `clanker-sdk/v3` |
+| Update image and metadata | `clanker-sdk/v4` or `clanker-sdk/v3` |
+| Launch a new token | `clanker-sdk/v5` only |
+
+**References:** [references/vesting.md](references/vesting.md), [references/airdrops.md](references/airdrops.md), [references/pool-config.md](references/pool-config.md)
 
 ## Common Workflows
 
 ### Simple Memecoin Launch
 
-1. Prepare token image (upload to IPFS)
-2. Deploy with basic config (name, symbol, image)
-3. Enable vanity address for memorable contract
-4. Share contract address
+1. Upload the token image to IPFS.
+2. Deploy with name, symbol, image, and `tokenAdmin`.
+3. Share the token address and the pool id.
 
-### Community Token with Airdrop
+### Creator Token with Taxes and Dividends
 
-1. Compile airdrop recipient list
-2. Create Merkle tree with `createAirdrop()`
-3. Deploy token with airdrop extension
-4. Register airdrop with Clanker service
-5. Share claim instructions
+1. Set `buyFee` and `sellFee` within the 1% to 10% range.
+2. Split the tax with `burn`, `dividends.share`, and `integrator.share` (at most 100% in total).
+3. Set `dividends.minimumHolding` in token base units.
+4. Deploy and share the token address.
 
-### Creator Token with Vesting
-
-1. Deploy with vault configuration
-2. Set lockup period (cliff)
-3. Set vesting duration
-4. Claim tokens as they vest
-
-## Full Deployment Config
+### Interface Fee Split
 
 ```typescript
-// Bankr interface fee recipient (20%)
-const BANKR_INTERFACE_ADDRESS = '0xF60633D02690e2A15A54AB919925F3d038Df163e';
-
-const tokenConfig = {
-  chainId: 8453,                    // Base
-  name: 'My Token',
-  symbol: 'TKN',
-  image: 'ipfs://...',
-  tokenAdmin: account.address,
-  
-  metadata: {
-    description: 'Token description',
-    socialMediaUrls: [
-      { platform: 'twitter', url: '...' },
-      { platform: 'telegram', url: '...' },
-    ],
-  },
-  
-  context: {
-    interface: 'Bankr',
-    platform: 'farcaster',
-    messageId: '',
-    id: '',
-  },
-  
-  vault: {
-    percentage: 10,
-    lockupDuration: 2592000,
-    vestingDuration: 2592000,
-    recipient: account.address,
-  },
-  
-  devBuy: {
-    ethAmount: 0,
-    recipient: account.address,
-  },
-  
-  // Default: 80% creator, 20% Bankr interface (all in paired token)
-  rewards: {
-    recipients: [
-      { 
-        recipient: account.address,
-        admin: account.address,
-        bps: 8000,  // 80% to creator
-        token: 'Paired',  // Receive paired token (WETH)
-      },
-      { 
-        recipient: BANKR_INTERFACE_ADDRESS,
-        admin: BANKR_INTERFACE_ADDRESS,
-        bps: 2000,  // 20% to Bankr
-        token: 'Paired',  // Receive paired token (WETH)
-      },
-    ],
-  },
-  
-  pool: {
-    pairedToken: '0x4200000000000000000000000000000000000006', // WETH
-    positions: 'Standard',
-  },
-  
-  fees: 'StaticBasic',
-  vanity: true,
-  
-  sniperFees: {
-    startingFee: 666_777,
-    endingFee: 41_673,
-    secondsToDecay: 15,
-  },
-};
+rewards: {
+  recipients: [
+    { recipient: account.address, admin: account.address, bps: 8000, token: 'Paired' },
+    { recipient: INTEGRATOR_ADDRESS, admin: INTEGRATOR_ADDRESS, bps: 2000, token: 'Paired' },
+  ],
+}
 ```
+
+### Existing V4 Token With a Vault or Airdrop
+
+Use the V4 entry point for claims and extensions. See the legacy references above.
 
 ## Best Practices
 
 ### Security
 
-1. **Never expose private keys** - Use environment variables
-2. **Test on testnet first** - Verify configs before mainnet
-3. **Simulate transactions** - Use `*Simulate` methods before execution
-4. **Verify addresses** - Double-check all recipient addresses
+1. **Never expose private keys** — use environment variables and keep them out of git.
+2. **Simulate first** — use `deploySimulate` or the CLI `--dry-run` before sending.
+3. **Read the live tax policy** — `taxPolicy` and `quoteConfig` can change for new launches.
+4. **Check the wallet's transactions before retrying** a `SEND_UNCERTAIN` failure.
 
-### Token Design
+### Cost and Timing
 
-1. **Choose meaningful names** - Clear, memorable token identity
-2. **Use quality images** - High-res, appropriate IPFS images
-3. **Configure vesting wisely** - Align with project timeline
-
-### Gas Optimization
-
-1. **Use Base or Arbitrum** - Lower gas fees
-2. **Batch operations** - Combine when possible
-3. **Monitor gas prices** - Deploy during low-traffic periods
+1. **Prefer Base, BNB Chain, Monad, or X Layer** for lower gas.
+2. **Raise `deadlineSeconds`** for slow signers such as multisigs.
+3. **Set `minAmountOut` explicitly** for large dev buys.
 
 ## Troubleshooting
 
-### Common Issues
-
-- **"Missing PRIVATE_KEY"** - Set environment variable
-- **"Insufficient balance"** - Fund wallet with native token
-- **"Transaction reverted"** - Check parameters, simulate first
-- **"Invalid image"** - Ensure IPFS hash is accessible
-
-### Debug Steps
-
-1. Check wallet balance
-2. Verify chain configuration
-3. Use simulation methods
-4. Check transaction on block explorer
-5. Review error message details
+**Reference:** [references/troubleshooting.md](references/troubleshooting.md)
 
 ## Resources
 
 - **GitHub**: [github.com/clanker-devco/clanker-sdk](https://github.com/clanker-devco/clanker-sdk)
 - **NPM**: [npmjs.com/package/clanker-sdk](https://www.npmjs.com/package/clanker-sdk)
-- **Examples**: [github.com/clanker-devco/clanker-sdk/tree/main/examples/v4](https://github.com/clanker-devco/clanker-sdk/tree/main/examples/v4)
+- **V5 guide**: [docs/v5.md](https://github.com/clanker-devco/clanker-sdk/blob/main/docs/v5.md)
+- **Examples**: [examples/v5](https://github.com/clanker-devco/clanker-sdk/tree/main/examples/v5)
 
 ---
 
-**💡 Pro Tip**: Always use the `vanity: true` option for memorable contract addresses.
+**💡 Pro Tip**: Read `taxPolicy` and `quoteConfig` before you quote a tax or dividend number to a user. The factory owner can change the policy for new launches.
 
-**⚠️ Security**: Never commit private keys. Use `.env` files and add them to `.gitignore`.
-
-**🚀 Quick Win**: Start with the simple deployment example, then add features like vesting and rewards as needed.
+**⚠️ Security**: Never commit private keys. Use `.env` files and keep them in `.gitignore`.

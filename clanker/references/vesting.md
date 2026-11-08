@@ -1,6 +1,8 @@
-# Token Vesting (Vault)
+# Token Vesting (Vault, V4 only)
 
 Configure token vesting with lockup periods and linear vesting using the Clanker vault system.
+
+> **V4 only.** V5 rejects vaults at launch. This reference covers existing V4 tokens: claiming vaulted tokens still works through `clanker-sdk/v4`. New launches use `clanker-sdk/v5`.
 
 ## Overview
 
@@ -12,6 +14,8 @@ The vault system allows you to lock a percentage of the token supply with:
 ## Basic Vault Configuration
 
 ```typescript
+import { Clanker } from 'clanker-sdk/v4';
+
 const { txHash, waitForTransaction, error } = await clanker.deploy({
   name: 'My Token',
   symbol: 'TKN',
